@@ -1,0 +1,31 @@
+{
+    "name": "mrsleeps/vexim-web-plugin-rspamd-core",
+    "description": "The core module for RSpamD support in VExim Web UI",
+    "license": "GPL-3.0-only",
+    "authors": [
+        {
+            "name": "Mr Sleeps"
+        }
+    ],
+    "require": {
+        "php": "^8.4",
+        "illuminate/support": "^13.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "VEximweb\\Plugin\\RSpamd\\Core\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "VEximweb\\Plugin\\RSpamd\\Core\\Providers\\RSpamdServiceProvider"
+            ]
+        },
+        "branch-alias": {
+            "dev-main": "1.x-dev"
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
