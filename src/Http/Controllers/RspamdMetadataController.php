@@ -43,8 +43,7 @@ class RspamdMetadataController extends Controller
     
     public function import(Request $request): \Illuminate\Http\JsonResponse
     {
-        Log::debug('RSpamd Meta: Raw request', [
-            'bearer'       => $request->bearerToken(),
+        Log::debug('RSpamd Meta: request received', [
             'content_type' => $request->header('Content-Type'),
         ]);
 

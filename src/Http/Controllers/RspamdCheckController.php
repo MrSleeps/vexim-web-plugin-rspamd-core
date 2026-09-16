@@ -144,19 +144,6 @@ class RspamdCheckController extends Controller
      */
     public function check(Request $request)
     {
-        
-    Log::info('Auth check', [
-        'user' => $request->user(),
-        'guard' => auth()->getDefaultDriver(),
-        'token' => $request->bearerToken(),
-    ]);   
-        
-        Log::info('=== RSPAMD CHECK CONTROLLER HIT ===');
-        Log::info('Request path: ' . $request->path());
-        Log::info('Request method: ' . $request->method());
-        Log::info('Bearer token: ' . $request->bearerToken());
-        Log::info('User: ' . ($request->user() ? $request->user()->id : 'null'));        
-        
         Log::info('Rspamd check request received', [
             'user_id' => $request->user()?->id,
             'ip' => $request->ip(),
