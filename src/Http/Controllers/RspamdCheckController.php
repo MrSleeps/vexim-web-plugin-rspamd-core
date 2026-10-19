@@ -153,6 +153,9 @@ class RspamdCheckController extends Controller
         $validated = $request->validate([
             'sender' => 'nullable|email',
             'sender_domain' => 'nullable|string',
+            'mime_sender' => 'nullable|email',
+            'mime_sender_domain' => 'nullable|string',
+            'mime_sender_verified' => 'nullable|boolean',
             'ip' => 'nullable|ip',
             'recipient' => 'required|email',
             'recipient_domain' => 'required|string',
@@ -162,6 +165,8 @@ class RspamdCheckController extends Controller
         $recipient = $validated['recipient'];
         $sender = $validated['sender'] ?? null;
         $senderDomain = $validated['sender_domain'] ?? null;
+        $mimeSender = $validated['mime_sender'] ?? null;
+        $mimeVerified = (bool) ($validated['mime_sender_verified'] ?? false);
         $ip = $validated['ip'] ?? null;
         $subject = $validated['subject'] ?? null;
 
@@ -174,10 +179,15 @@ class RspamdCheckController extends Controller
 
         $domainId = $user->domain_id;
 
-        $cacheKey = "rspamd:check:{$user->user_id}:" . md5($sender . $ip . $subject);
+        // Include the visible sender and verification state so cached misses cannot
+        // mask a later verified whitelist hit (or accidentally reuse a hit).
+        $cacheKey = "rspamd:check:v2:{$user->user_id}:" . hash('sha256', json_encode([
+            strtolower($sender ?? ''), strtolower($mimeSender ?? ''), $mimeVerified,
+            $ip, $subject,
+        ]));
         
         return Cache::remember($cacheKey, 300, function() use (
-            $recipient, $sender, $senderDomain, $ip, $subject, $domainId, $user
+            $recipient, $sender, $senderDomain, $mimeSender, $mimeVerified, $ip, $subject, $domainId, $user
         ) {
             $response = [
                 'whitelist' => false,
@@ -191,33 +201,44 @@ class RspamdCheckController extends Controller
                 'subject_score' => null
             ];
 
-            // 1. Check whitelist (highest priority)
-            $whitelisted = Whitelist::where(function($q) use ($domainId, $user) {
-                // Global whitelist
-                $q->orWhere('domain_id', 0)
-                  // Domain whitelist
-                  ->orWhere('domain_id', $domainId)
-                  ->whereNull('localpart')
-                  // User whitelist
-                  ->orWhere(function($sq) use ($domainId, $user) {
-                      $sq->where('domain_id', $domainId)
-                         ->where('localpart', $user->localpart);
-                  });
-            })
-            ->where(function($q) use ($sender, $senderDomain) {
-                // Match exact sender or domain pattern
-                if ($sender) {
-                    $q->where('sender', $sender);
+            // 1. Check whitelist (highest priority). Match either the SMTP
+            // envelope sender or a DMARC-verified visible From sender.
+            // An unverified MIME From must NEVER cause an allowlist bypass.
+            $eligibleSenders = array_filter(array_unique(array_map('strtolower', [
+                $sender,
+                $mimeVerified ? $mimeSender : null,
+            ])));
+            $eligibleDomains = [];
+            foreach ($eligibleSenders as $address) {
+                $at = strrpos($address, '@');
+                if ($at !== false) {
+                    $eligibleDomains[] = substr($address, $at + 1);
                 }
-                if ($senderDomain) {
-                    $q->orWhere('sender', 'like', '%@' . $senderDomain);
-                }
-            })
-            ->exists();
+            }
+            $eligibleDomains = array_unique($eligibleDomains);
+
+            $whitelisted = false;
+            if ($eligibleSenders) {
+                $whitelisted = Whitelist::where(function ($q) use ($domainId, $user) {
+                    $q->where('domain_id', 0)
+                      ->orWhere(function ($sq) use ($domainId) {
+                          $sq->where('domain_id', $domainId)->whereNull('localpart');
+                      })
+                      ->orWhere(function ($sq) use ($domainId, $user) {
+                          $sq->where('domain_id', $domainId)
+                             ->where('localpart', $user->localpart);
+                      });
+                })->where(function ($q) use ($eligibleSenders, $eligibleDomains) {
+                    $q->whereIn('sender', $eligibleSenders);
+                    foreach ($eligibleDomains as $domain) {
+                        $q->orWhereRaw('LOWER(sender) = ?', ['@' . $domain]);
+                    }
+                })->exists();
+            }
 
             if ($whitelisted) {
                 $response['whitelist'] = true;
-                Log::info('Whitelist hit', ['sender' => $sender, 'recipient' => $user->username]);
+                Log::info('Whitelist hit', ['sender' => $sender, 'mime_sender' => $mimeVerified ? $mimeSender : null, 'recipient' => $user->username]);
                 return $response;
             }
 
